@@ -1,91 +1,56 @@
-const WebSocket = require('ws');
-const http = require('http');
+const express = require("express");
+const cors = require("cors");
 
-const server = http.createServer();
-const wss = new WebSocket.Server({ server });
+const app = express();
 
-let players = {};
-let nextId = 1;
+app.use(cors());
+app.use(express.json());
 
-function generateGameId() {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let id = "";
-    for (let i = 0; i < 4; i++) {
-        id += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return id;
-}
+const rooms = {};
 
-server.on('request', (req, res) => {
-    if (req.url === '/players') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        const list = Object.entries(players).map(([id, p]) => ({
-            id: parseInt(id),
-            gameId: p.gameId
-        }));
-        res.end(JSON.stringify(list, null, 2));
-    } else {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('Game server running. Players: ' + Object.keys(players).length);
-    }
-});
+app.post("/host", (req, res) => {
 
-wss.on('connection', (ws) => {
-    const playerId = nextId++;
-    const gameId = generateGameId();
-    players[playerId] = { ws: ws, gameId: gameId };
+    const roomId = Math.floor(100000 + Math.random() * 900000).toString();
 
-    console.log(`Player ${playerId} (${gameId}) joined. Total: ${Object.keys(players).length}`);
+    rooms[roomId] = {
+        host_ip: req.body.ip,
+        players: 1
+    };
 
-    const existingPlayers = Object.keys(players)
-        .map(id => parseInt(id))
-        .filter(id => id !== playerId)
-        .map(id => ({ id: id, gameId: players[id].gameId }));
-
-    ws.send(JSON.stringify({
-        type: "welcome",
-        id: playerId,
-        gameId: gameId,
-        existing_players: existingPlayers
-    }));
-
-    broadcast({ type: "player_joined", id: playerId, gameId: gameId }, playerId);
-
-    ws.on('message', (msg) => {
-        let data;
-        try { data = JSON.parse(msg); } catch (e) { return; }
-
-        if (data.type === "ban_request") {
-            const targetGameId = data.target_game_id;
-            const targetEntry = Object.entries(players).find(([id, p]) => p.gameId === targetGameId);
-            if (targetEntry) {
-                const targetId = targetEntry[0];
-                const targetPlayer = targetEntry[1];
-                targetPlayer.ws.send(JSON.stringify({ type: "you_were_banned" }));
-                targetPlayer.ws.close();
-                broadcast({ type: "player_banned", id: parseInt(targetId), gameId: targetGameId });
-            }
-            return;
-        }
-
-        broadcast({ type: "data", from: playerId, payload: data }, playerId);
+    res.json({
+        success: true,
+        room: roomId
     });
 
-    ws.on('close', () => {
-        delete players[playerId];
-        broadcast({ type: "player_left", id: playerId }, playerId);
-        console.log(`Player ${playerId} left. Total: ${Object.keys(players).length}`);
-    });
 });
 
-function broadcast(data, excludeId = null) {
-    const msg = JSON.stringify(data);
-    for (const id in players) {
-        if (id != excludeId && players[id].ws.readyState === WebSocket.OPEN) {
-            players[id].ws.send(msg);
-        }
-    }
-}
+app.post("/join", (req, res) => {
 
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`Server on port ${PORT}`));
+    const room = rooms[req.body.room];
+
+    if (!room) {
+        return res.json({
+            success: false
+        });
+    }
+
+    room.players++;
+
+    res.json({
+        success: true,
+        ip: room.host_ip
+    });
+
+});
+
+app.get("/rooms", (req, res) => {
+
+    res.json(rooms);
+
+});
+
+app.listen(3000, () => {
+
+    console.log("Server Running");
+
+});
